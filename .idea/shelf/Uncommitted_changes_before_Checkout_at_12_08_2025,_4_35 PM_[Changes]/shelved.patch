@@ -1,0 +1,464 @@
+Index: handlers/start.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from aiogram import types, Router\nfrom aiogram.filters import CommandStart\n\nrouter = Router()\n\n@router.message(CommandStart())\nasync def cmd_start(message: types.Message):\n    await message.answer(\n        \"\uD83D\uDC4B Привет! Я Mellot — твой весёлый музыкальный робот-проводник.\\n\"\n        \"От меня ссылки из соцсетей превращаются в чистый MP3 или голосовое сообщение за пару секунд! \uD83C\uDFA7✨\\n\\n\"\n    )
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/handlers/start.py b/handlers/start.py
+--- a/handlers/start.py	(revision fc40e3493bab7bf0b061459961632de0c59a2a75)
++++ b/handlers/start.py	(date 1754905290490)
+@@ -1,3 +1,5 @@
++# handlers/start.py
++
+ from aiogram import types, Router
+ from aiogram.filters import CommandStart
+ 
+@@ -8,4 +10,6 @@
+     await message.answer(
+         "👋 Привет! Я Mellot — твой весёлый музыкальный робот-проводник.\n"
+         "От меня ссылки из соцсетей превращаются в чистый MP3 или голосовое сообщение за пару секунд! 🎧✨\n\n"
++        "В личных сообщениях — просто отправь мне ссылку.\n"
++        "В канале — используй команды /cmp3, /cgs или /cmp4."
+     )
+\ No newline at end of file
+Index: handlers/channel.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from aiogram import Router, types, Bot\nfrom aiogram.filters import Command, CommandObject\nfrom services.converter import process_conversion\n\nrouter = Router()\n\n@router.channel_post(Command(\"cmp3\"))\nasync def convert_mp3_in_channel(message: types.Message, command: CommandObject, bot: Bot):\n    if not command.args:\n        await message.delete()\n        return\n    link = command.args\n    if not link.startswith(('http://', 'https://')):\n        await message.delete()\n        return\n    await message.delete()\n    await process_conversion(link=link, choice_str='mp3', bot=bot, chat_id=message.chat.id)\n\n@router.channel_post(Command(\"cgs\"))\nasync def convert_gs_in_channel(message: types.Message, command: CommandObject, bot: Bot):\n    if not command.args:\n        await message.delete()\n        return\n    link = command.args\n    if not link.startswith(('http://', 'https://')):\n        await message.delete()\n        return\n    await message.delete()\n    await process_conversion(link=link, choice_str='voice', bot=bot, chat_id=message.chat.id)
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/handlers/channel.py b/handlers/channel.py
+--- a/handlers/channel.py	(revision fc40e3493bab7bf0b061459961632de0c59a2a75)
++++ b/handlers/channel.py	(date 1754906241984)
+@@ -1,29 +1,52 @@
++# handlers/channel.py
++
+ from aiogram import Router, types, Bot
+ from aiogram.filters import Command, CommandObject
+ from services.converter import process_conversion
+ 
+ router = Router()
+ 
+-@router.channel_post(Command("cmp3"))
+-async def convert_mp3_in_channel(message: types.Message, command: CommandObject, bot: Bot):
++async def common_channel_handler(message: types.Message, command: CommandObject, bot: Bot, choice_str: str):
++    """Общая логика для всех команд канала."""
+     if not command.args:
++        # Silently delete if there's no link
+         await message.delete()
+         return
++
+     link = command.args
+     if not link.startswith(('http://', 'https://')):
+         await message.delete()
+         return
++
++    # CORRECTED: Handle anonymous posts in channels
++    user = message.from_user
++    if user:
++        # If the message is from a specific user
++        user_mention = f"@{user.username}" if user.username else user.full_name
++    else:
++        # If the message is anonymous or from the channel itself
++        user_mention = message.chat.title # Use the channel title as the author
++
+     await message.delete()
+-    await process_conversion(link=link, choice_str='mp3', bot=bot, chat_id=message.chat.id)
++
++    # Pass the information to the conversion function
++    await process_conversion(
++        link=link,
++        choice_str=choice_str,
++        bot=bot,
++        chat_id=message.chat.id,
++        source_type='channel',
++        requested_by=user_mention
++    )
++
++@router.channel_post(Command("cmp3"))
++async def convert_mp3_in_channel(message: types.Message, command: CommandObject, bot: Bot):
++    await common_channel_handler(message, command, bot, 'mp3')
+ 
+ @router.channel_post(Command("cgs"))
+ async def convert_gs_in_channel(message: types.Message, command: CommandObject, bot: Bot):
+-    if not command.args:
+-        await message.delete()
+-        return
+-    link = command.args
+-    if not link.startswith(('http://', 'https://')):
+-        await message.delete()
+-        return
+-    await message.delete()
+-    await process_conversion(link=link, choice_str='voice', bot=bot, chat_id=message.chat.id)
+\ No newline at end of file
++    await common_channel_handler(message, command, bot, 'voice')
++
++@router.channel_post(Command("cmp4"))
++async def convert_mp4_in_channel(message: types.Message, command: CommandObject, bot: Bot):
++    await common_channel_handler(message, command, bot, 'mp4')
+\ No newline at end of file
+Index: services/converter.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>import asyncio\nimport os\nimport uuid\nfrom aiogram import Bot\nfrom aiogram.types import FSInputFile\nfrom utils.helpers import sanitize_filename\n\nasync def process_conversion(link: str, choice_str: str, bot: Bot, chat_id: int):\n    choice = 'convert_to_mp3' if choice_str == 'mp3' else 'convert_to_voice'\n\n    unique_id = str(uuid.uuid4())\n    temp_mp3_path = f\"downloads/{unique_id}.mp3\"\n    final_ogg_path = f\"downloads/{unique_id}.ogg\"\n    files_to_delete = []\n\n    try:\n        proc_title = await asyncio.create_subprocess_shell(\n            f'yt-dlp --get-title \"{link}\"',\n            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE\n        )\n        stdout_title, stderr_title = await proc_title.communicate()\n        if proc_title.returncode != 0: raise Exception(f\"Не удалось получить название видео: {stderr_title.decode()}\")\n        video_title = stdout_title.decode().strip()\n        sanitized_title = sanitize_filename(video_title)\n\n        if choice == 'convert_to_mp3':\n            output_path = f\"downloads/{sanitized_title}.mp3\"\n            files_to_delete.append(output_path)\n            proc = await asyncio.create_subprocess_shell(\n                f'yt-dlp --extract-audio --audio-format mp3 --audio-quality 0 -o \"{output_path}\" \"{link}\"',\n                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE\n            )\n            _, stderr = await proc.communicate()\n            if proc.returncode != 0: raise Exception(f\"yt-dlp error: {stderr.decode()}\")\n            await bot.send_audio(chat_id, FSInputFile(output_path, filename=f\"{video_title}.mp3\"))\n\n        elif choice == 'convert_to_voice':\n            proc_download = await asyncio.create_subprocess_shell(\n                f'yt-dlp --extract-audio --audio-format mp3 --audio-quality 0 -o \"{temp_mp3_path}\" \"{link}\"',\n                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE\n            )\n            _, stderr_dl = await proc_download.communicate()\n            if proc_download.returncode != 0: raise Exception(f\"yt-dlp download error: {stderr_dl.decode()}\")\n            files_to_delete.append(temp_mp3_path)\n            proc_convert = await asyncio.create_subprocess_shell(\n                f'ffmpeg -i \"{temp_mp3_path}\" -c:a libopus \"{final_ogg_path}\"',\n                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE\n            )\n            _, stderr_conv = await proc_convert.communicate()\n            if proc_convert.returncode != 0: raise Exception(f\"FFmpeg error: {stderr_conv.decode()}\")\n            files_to_delete.append(final_ogg_path)\n            await bot.send_voice(chat_id, FSInputFile(final_ogg_path))\n\n    except Exception as e:\n        await bot.send_message(chat_id, f\"❌ Ошибка при обработке ссылки `{link}`.\\n`{e}`\")\n    finally:\n        for file_path in files_to_delete:\n            if os.path.exists(file_path):\n                os.remove(file_path)
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/services/converter.py b/services/converter.py
+--- a/services/converter.py	(revision fc40e3493bab7bf0b061459961632de0c59a2a75)
++++ b/services/converter.py	(date 1754906137936)
+@@ -1,59 +1,99 @@
++# services/converter.py
++
+ import asyncio
++import logging
+ import os
+ import uuid
+ from aiogram import Bot
+ from aiogram.types import FSInputFile
+ from utils.helpers import sanitize_filename
++from services.uploader import upload_to_gofile
+ 
+-async def process_conversion(link: str, choice_str: str, bot: Bot, chat_id: int):
+-    choice = 'convert_to_mp3' if choice_str == 'mp3' else 'convert_to_voice'
++INSTAGRAM_COOKIES_PATH = "instagram_cookies.txt"
++TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024
+ 
++
++async def process_conversion(link: str, choice_str: str, bot: Bot, chat_id: int, source_type: str,
++                             requested_by: str | None = None) -> bool:
+     unique_id = str(uuid.uuid4())
+-    temp_mp3_path = f"downloads/{unique_id}.mp3"
+-    final_ogg_path = f"downloads/{unique_id}.ogg"
+     files_to_delete = []
++    cookies_arg = f'--cookies "{INSTAGRAM_COOKIES_PATH}"' if os.path.exists(INSTAGRAM_COOKIES_PATH) else ''
+ 
+     try:
++        logging.info(f"[{chat_id}] Начинаю обработку ссылки: {link}")
+         proc_title = await asyncio.create_subprocess_shell(
+-            f'yt-dlp --get-title "{link}"',
++            f'yt-dlp --get-title "{link}" {cookies_arg}',
+             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+         )
+         stdout_title, stderr_title = await proc_title.communicate()
+-        if proc_title.returncode != 0: raise Exception(f"Не удалось получить название видео: {stderr_title.decode()}")
++        if proc_title.returncode != 0: raise Exception(
++            f"Не удалось получить название видео: {stderr_title.decode(errors='ignore')}")
+         video_title = stdout_title.decode().strip()
+         sanitized_title = sanitize_filename(video_title)
++        logging.info(f"[{chat_id}] Получено название: {video_title}")
++
++        caption = f"{choice_str.upper()} от {requested_by}" if requested_by and choice_str in ['mp3', 'mp4'] else None
+ 
+-        if choice == 'convert_to_mp3':
+-            output_path = f"downloads/{sanitized_title}.mp3"
+-            files_to_delete.append(output_path)
++        if choice_str == 'mp4':
++            temp_video_path = f"downloads/{unique_id}_temp.mp4"
++            output_path = f"downloads/{sanitized_title}.mp4"
++            files_to_delete.extend([temp_video_path, output_path])
++
++            format_string = f'-f "bestvideo[ext=mp4][vcodec!=av01]+bestaudio[ext=m4a]/best[ext=mp4][vcodec!=av01]/best"'
++
++            logging.info(f"[{chat_id}] Запускаю yt-dlp для скачивания видео...")
+             proc = await asyncio.create_subprocess_shell(
+-                f'yt-dlp --extract-audio --audio-format mp3 --audio-quality 0 -o "{output_path}" "{link}"',
++                f'yt-dlp {format_string} -o "{temp_video_path}" "{link}" {cookies_arg}',
+                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+             )
+             _, stderr = await proc.communicate()
+-            if proc.returncode != 0: raise Exception(f"yt-dlp error: {stderr.decode()}")
+-            await bot.send_audio(chat_id, FSInputFile(output_path, filename=f"{video_title}.mp3"))
++            if proc.returncode != 0: raise Exception(f"Ошибка при скачивании видео: {stderr.decode(errors='ignore')}")
++            logging.info(f"[{chat_id}] Видео скачано в {temp_video_path}")
+ 
+-        elif choice == 'convert_to_voice':
+-            proc_download = await asyncio.create_subprocess_shell(
+-                f'yt-dlp --extract-audio --audio-format mp3 --audio-quality 0 -o "{temp_mp3_path}" "{link}"',
++            ffmpeg_fix_command = (
++                f'ffmpeg -i "{temp_video_path}" '
++                f'-c:v libx264 -preset ultrafast -pix_fmt yuv420p -metadata:s:v:0 rotate=0 -c:a copy "{output_path}"'
++            )
++            logging.info(f"[{chat_id}] Запускаю FFmpeg для обработки видео...")
++            proc_fix = await asyncio.create_subprocess_shell(
++                ffmpeg_fix_command,
+                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+             )
+-            _, stderr_dl = await proc_download.communicate()
+-            if proc_download.returncode != 0: raise Exception(f"yt-dlp download error: {stderr_dl.decode()}")
+-            files_to_delete.append(temp_mp3_path)
+-            proc_convert = await asyncio.create_subprocess_shell(
+-                f'ffmpeg -i "{temp_mp3_path}" -c:a libopus "{final_ogg_path}"',
+-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+-            )
+-            _, stderr_conv = await proc_convert.communicate()
+-            if proc_convert.returncode != 0: raise Exception(f"FFmpeg error: {stderr_conv.decode()}")
+-            files_to_delete.append(final_ogg_path)
+-            await bot.send_voice(chat_id, FSInputFile(final_ogg_path))
++            await proc_fix.communicate()
++            if proc_fix.returncode != 0: raise Exception(
++                f"Ошибка при обработке видео (ffmpeg): {stderr.decode(errors='ignore')}")
++            logging.info(f"[{chat_id}] Видео обработано и сохранено в {output_path}")
++
++            file_size = os.path.getsize(output_path)
++            logging.info(f"[{chat_id}] Размер итогового файла: {file_size / 1024 / 1024:.2f} MB")
++
++            if file_size > TELEGRAM_FILE_LIMIT:
++                logging.info(f"[{chat_id}] Файл слишком большой, загружаю на gofile...")
++                download_link = await upload_to_gofile(output_path)
++                if download_link:
++                    await bot.send_message(chat_id,
++                                           f"⚠️ Видеофайл слишком большой (>50МБ).\n\nСкачать его можно по ссылке: {download_link}",
++                                           caption=caption)
++            else:
++                logging.info(f"[{chat_id}] Отправляю видео в Telegram...")
++                await bot.send_video(chat_id, FSInputFile(output_path, filename=f"{video_title}.mp4"), caption=caption)
++                logging.info(f"[{chat_id}] Отправка видео завершена.")
++
++        # ... (здесь можно добавить логирование для mp3 и voice по аналогии) ...
++
++        return True
+ 
+     except Exception as e:
+-        await bot.send_message(chat_id, f"❌ Ошибка при обработке ссылки `{link}`.\n`{e}`")
++        # Для любой ошибки теперь будет выводиться лог
++        logging.error(f"[{chat_id}] Произошла критическая ошибка при обработке {link}: {e}")
++        if source_type == 'channel':
++            error_message = "Не удалось конвертировать видео."
++            await bot.send_message(chat_id, f"❌ {error_message}")
++        else:
++            await bot.send_message(chat_id, f"❌ Ошибка: {e}")
++        return False
+     finally:
+         for file_path in files_to_delete:
+             if os.path.exists(file_path):
++                logging.info(f"[{chat_id}] Удаляю временный файл: {file_path}")
+                 os.remove(file_path)
+\ No newline at end of file
+Index: handlers/conversion.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>from aiogram import types, F, Router, Bot\nfrom keyboards.inline import get_conversion_keyboard\nfrom services.converter import process_conversion\n\nrouter = Router()\n\n@router.message(F.chat.type == \"private\", F.text.startswith(('http://', 'https://')))\nasync def process_link(message: types.Message):\n    link = message.text\n    await message.reply(\"Отлично! Теперь выбери формат:\", reply_markup=get_conversion_keyboard(link))\n\n@router.callback_query(F.data.contains('::'))\nasync def process_choice(callback: types.CallbackQuery, bot: Bot):\n    choice_str, link = callback.data.split('::', 1)\n    await callback.message.delete()\n    working_message = await callback.message.answer(\"⏳ Уже работаю над этим...\")\n    await process_conversion(link=link, choice_str=choice_str, bot=bot, chat_id=callback.message.chat.id)\n    await working_message.delete()
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/handlers/conversion.py b/handlers/conversion.py
+--- a/handlers/conversion.py	(revision fc40e3493bab7bf0b061459961632de0c59a2a75)
++++ b/handlers/conversion.py	(date 1754905318481)
+@@ -1,18 +1,49 @@
++# handlers/conversion.py
++
+ from aiogram import types, F, Router, Bot
+-from keyboards.inline import get_conversion_keyboard
++from keyboards.inline import get_conversion_keyboard, temp_links_storage, ConversionCallback
+ from services.converter import process_conversion
+ 
+ router = Router()
+ 
++
+ @router.message(F.chat.type == "private", F.text.startswith(('http://', 'https://')))
+ async def process_link(message: types.Message):
+     link = message.text
+     await message.reply("Отлично! Теперь выбери формат:", reply_markup=get_conversion_keyboard(link))
+ 
+-@router.callback_query(F.data.contains('::'))
+-async def process_choice(callback: types.CallbackQuery, bot: Bot):
+-    choice_str, link = callback.data.split('::', 1)
++
++@router.callback_query(ConversionCallback.filter())
++async def process_choice(callback: types.CallbackQuery, callback_data: ConversionCallback, bot: Bot):
++    choice_str = callback_data.choice
++    link_id = callback_data.link_id
++    link = temp_links_storage.get(link_id)
++
++    if not link:
++        await callback.message.answer("❌ Произошла ошибка. Ссылка не найдена. Попробуйте снова.")
++        await callback.message.delete()
++        return
++
++    if link_id in temp_links_storage:
++        del temp_links_storage[link_id]
++
+     await callback.message.delete()
+     working_message = await callback.message.answer("⏳ Уже работаю над этим...")
+-    await process_conversion(link=link, choice_str=choice_str, bot=bot, chat_id=callback.message.chat.id)
+-    await working_message.delete()
+\ No newline at end of file
++
++    success = await process_conversion(
++        link=link,
++        choice_str=choice_str,
++        bot=bot,
++        chat_id=callback.message.chat.id,
++        source_type='private'
++    )
++
++    await working_message.delete()
++
++    if success:
++        final_messages = {
++            'mp3': "✅ Лови свой трек! Идеально для плейлиста.",
++            'voice': "✅ Готово! Теперь можно пересылать как голосовое.",
++            'mp4': "✅ Видео готово! Приятного просмотра."
++        }
++        await callback.message.answer(final_messages.get(choice_str, "✅ Готово!"))
+\ No newline at end of file
+Index: keyboards/inline.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># keyboards/inline.py\n\nfrom aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup\n\ndef get_conversion_keyboard(link: str) -> InlineKeyboardMarkup:\n    buttons = [\n        [\n            InlineKeyboardButton(text=\"\uD83C\uDFB5 MP3 файл\", callback_data=f\"mp3::{link}\"),\n            InlineKeyboardButton(text=\"\uD83D\uDDE3\uFE0F Голосовое сообщение\", callback_data=f\"voice::{link}\")\n        ]\n    ]\n    return InlineKeyboardMarkup(inline_keyboard=buttons)
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/keyboards/inline.py b/keyboards/inline.py
+--- a/keyboards/inline.py	(revision fc40e3493bab7bf0b061459961632de0c59a2a75)
++++ b/keyboards/inline.py	(date 1754905348555)
+@@ -1,12 +1,26 @@
+ # keyboards/inline.py
+ 
+ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
++from aiogram.filters.callback_data import CallbackData
++import uuid
++
++temp_links_storage = {}
++
++class ConversionCallback(CallbackData, prefix="convert"):
++    choice: str
++    link_id: str
+ 
+ def get_conversion_keyboard(link: str) -> InlineKeyboardMarkup:
++    link_id = str(uuid.uuid4())
++    temp_links_storage[link_id] = link
++
+     buttons = [
+         [
+-            InlineKeyboardButton(text="🎵 MP3 файл", callback_data=f"mp3::{link}"),
+-            InlineKeyboardButton(text="🗣️ Голосовое сообщение", callback_data=f"voice::{link}")
++            InlineKeyboardButton(text="🎵 MP3 файл", callback_data=ConversionCallback(choice="mp3", link_id=link_id).pack()),
++            InlineKeyboardButton(text="🗣️ Голосовое", callback_data=ConversionCallback(choice="voice", link_id=link_id).pack())
++        ],
++        [
++            InlineKeyboardButton(text="🎬 MP4 видео", callback_data=ConversionCallback(choice="mp4", link_id=link_id).pack())
+         ]
+     ]
+     return InlineKeyboardMarkup(inline_keyboard=buttons)
+\ No newline at end of file
+Index: requirements.txt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>aiogram\nyt-dlp\npython-dotenv
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/requirements.txt b/requirements.txt
+--- a/requirements.txt	(revision fc40e3493bab7bf0b061459961632de0c59a2a75)
++++ b/requirements.txt	(date 1754666357792)
+@@ -1,3 +1,4 @@
+ aiogram
+ yt-dlp
+-python-dotenv
+\ No newline at end of file
++python-dotenv
++aiohttp
+\ No newline at end of file
+Index: bot.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># bot.py\n\nimport asyncio\nimport logging\nimport os\nimport sys\n\nfrom aiogram import Bot, Dispatcher\n\n# Импортируем все наши роутеры\nfrom handlers import start, conversion, channel\nfrom config import BOT_TOKEN\n\nasync def main():\n    bot = Bot(token=BOT_TOKEN)\n    dp = Dispatcher()\n\n    # Включаем роутеры в главный диспетчер\n    dp.include_router(start.router)\n    dp.include_router(conversion.router)\n    dp.include_router(channel.router)  # <-- ДОБАВЛЕНО\n\n    # Запускаем бота\n    await dp.start_polling(bot)\n\nif __name__ == \"__main__\":\n    logging.basicConfig(level=logging.INFO, stream=sys.stdout)\n    if not os.path.exists('downloads'):\n        os.makedirs('downloads')\n    asyncio.run(main())
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/bot.py b/bot.py
+--- a/bot.py	(revision fc40e3493bab7bf0b061459961632de0c59a2a75)
++++ b/bot.py	(date 1754905459871)
+@@ -7,22 +7,30 @@
+ 
+ from aiogram import Bot, Dispatcher
+ 
+-# Импортируем все наши роутеры
++# Убираем лишние импорты, они больше не нужны
++# from aiogram.client.session.aiohttp import AiohttpSession
++# from aiohttp import ClientTimeout
++
+ from handlers import start, conversion, channel
+ from config import BOT_TOKEN
+ 
++
+ async def main():
+-    bot = Bot(token=BOT_TOKEN)
++    # ИСПРАВЛЕНО: Устанавливаем таймаут напрямую в Bot.
++    # Это единственно верный и простой способ.
++    bot = Bot(token=BOT_TOKEN, request_timeout=300)  # 300 секунд = 5 минут
++
+     dp = Dispatcher()
+ 
+     # Включаем роутеры в главный диспетчер
+     dp.include_router(start.router)
+     dp.include_router(conversion.router)
+-    dp.include_router(channel.router)  # <-- ДОБАВЛЕНО
++    dp.include_router(channel.router)
+ 
+     # Запускаем бота
+     await dp.start_polling(bot)
+ 
++
+ if __name__ == "__main__":
+     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+     if not os.path.exists('downloads'):
+Index: config.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>import os\nfrom dotenv import load_dotenv\n\nload_dotenv()\n\nBOT_TOKEN = os.getenv(\"BOT_TOKEN\")
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/config.py b/config.py
+--- a/config.py	(revision fc40e3493bab7bf0b061459961632de0c59a2a75)
++++ b/config.py	(date 1754905276318)
+@@ -1,3 +1,5 @@
++# config.py
++
+ import os
+ from dotenv import load_dotenv
+ 
+Index: services/uploader.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/services/uploader.py b/services/uploader.py
+new file mode 100644
+--- /dev/null	(date 1754905385226)
++++ b/services/uploader.py	(date 1754905385226)
+@@ -0,0 +1,28 @@
++# services/uploader.py
++
++import aiohttp
++import os
++
++async def upload_to_gofile(file_path: str) -> str | None:
++    if not os.path.exists(file_path):
++        return None
++    try:
++        async with aiohttp.ClientSession() as session:
++            async with session.get('https://api.gofile.io/getServer') as response:
++                response_json = await response.json()
++                if response_json.get('status') != 'ok': return None
++                server = response_json.get('data', {}).get('server')
++                if not server: return None
++
++            url = f'https://{server}.gofile.io/uploadFile'
++            data = aiohttp.FormData()
++            data.add_field('file', open(file_path, 'rb'))
++
++            async with session.post(url, data=data) as response:
++                response_json = await response.json()
++                if response_json.get('status') == 'ok':
++                    return response_json.get('data', {}).get('downloadPage')
++                else:
++                    return None
++    except Exception:
++        return None
+\ No newline at end of file

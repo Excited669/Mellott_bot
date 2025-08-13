@@ -1,5 +1,4 @@
 # bot.py
-
 import asyncio
 import logging
 import os
@@ -7,20 +6,17 @@ import sys
 
 from aiogram import Bot, Dispatcher
 
-# Импортируем все наши роутеры
-from handlers import start, conversion, channel
 from config import BOT_TOKEN
+from handlers import private_handlers, channel_handlers
 
 async def main():
+    # Убрали таймаут, т.к. фоновые задачи решают эту проблему лучше
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
-    # Включаем роутеры в главный диспетчер
-    dp.include_router(start.router)
-    dp.include_router(conversion.router)
-    dp.include_router(channel.router)  # <-- ДОБАВЛЕНО
+    dp.include_router(private_handlers.router)
+    dp.include_router(channel_handlers.router)
 
-    # Запускаем бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
